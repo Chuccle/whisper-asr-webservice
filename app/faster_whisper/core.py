@@ -5,12 +5,13 @@ from typing import BinaryIO, Union
 
 import torch
 import whisper
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, BatchedInferencePipeline
 
 from .utils import ResultWriter, WriteJSON, WriteSRT, WriteTSV, WriteTXT, WriteVTT
 
-model_name = os.getenv("ASR_MODEL", "base")
-model_path = os.getenv("ASR_MODEL_PATH", os.path.join(os.path.expanduser("~"), ".cache", "whisper"))
+model_name         = os.getenv("ASR_MODEL", "base")
+model_path         = os.getenv("ASR_MODEL_PATH", os.path.join(os.path.expanduser("~"), ".cache", "whisper"))
+model_batchsupport = os.getenv("BATCH_SUPPORT", "false")
 
 # More about available quantization levels is here:
 #   https://opennmt.net/CTranslate2/quantization.html
@@ -25,8 +26,15 @@ model = WhisperModel(
     model_size_or_path=model_name, device=device, compute_type=model_quantization, download_root=model_path
 )
 
-model_lock = Lock()
+model = BatchedInferencePipeline(
+    WhisperModel(
+    model_size_or_path=model_name, device=device, compute_type=model_quantization, download_root=model_path
+    )
+) if model_batchsupport == 'true' else WhisperModel(
+    model_size_or_path=model_name, device=device, compute_type=model_quantization, download_root=model_path
+)
 
+model_lock = Lock()
 
 def transcribe(
     audio,
@@ -49,7 +57,7 @@ def transcribe(
     with model_lock:
         segments = []
         text = ""
-        segment_generator, info = model.transcribe(audio, beam_size=5, **options_dict)
+        segment_generator, info = model.transcribe(audio, beam_size=5, **options_dict, batch_size=16 if model_batchsupport == 'true' else None)
         for segment in segment_generator:
             segments.append(segment)
             text = text + segment.text
